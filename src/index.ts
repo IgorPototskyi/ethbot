@@ -1,7 +1,7 @@
-import dotenv from "dotenv";
+import { config } from "dotenv";
 import { Bot, GrammyError, HttpError, Keyboard, InlineKeyboard } from "grammy";
 
-dotenv.config();
+config();
 
 if (process.env.BOT_TOKEN) {
   const bot = new Bot(process.env.BOT_TOKEN);

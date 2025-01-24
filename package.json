@@ -1,9 +1,11 @@
 {
   "name": "ethbot",
   "version": "1.0.0",
-  "main": "index.js",
+  "main": "src/index.ts",
+  "type": "module",
   "scripts": {
-    "start": "npx nodemon"
+    "dev": "npx nodemon",
+    "prod": "npx tsc"
   },
   "keywords": [],
   "author": "",
@@ -16,6 +18,7 @@
   },
   "devDependencies": {
     "@types/node": "^22.10.9",
+    "@types/node-fetch": "^2.6.12",
     "ts-node": "^10.9.2",
     "typescript": "^5.7.3"
   }
