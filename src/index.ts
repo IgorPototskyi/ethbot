@@ -1,33 +1,158 @@
 import { config } from "dotenv";
-import { Bot, GrammyError, HttpError, Keyboard, InlineKeyboard } from "grammy";
+import { Bot, GrammyError, HttpError } from "grammy";
+
+interface TradeData {
+  e: string; // Event type
+  E: number; // Event time
+  s: string; // Symbol
+  k: {
+    t: number; // Kline start time
+    T: number; // Kline close time
+    s: string; // Symbol
+    i: string; // Interval
+    f: number; // First trade ID
+    L: number; // Last trade ID
+    o: string; // Open price
+    c: string; // Close price
+    h: string; // High price
+    l: string; // Low price
+    v: string; // Base asset volume
+    n: number; // Number of trades
+    x: boolean; // Is this kline closed?
+    q: string; // Quote asset volume
+    V: string; // Taker buy base asset volume
+    Q: string; // Taker buy quote asset volume
+    B: string; // Ignore
+  };
+}
+
+const BotCommands = {
+  START: "start",
+  STOP: "stop",
+  STATUS: "status",
+} as const;
+
+const TradePairs = {
+  ETHUSDT: "ethusdt",
+} as const;
+
+const StreamTypes = {
+  KLINE: "kline",
+} as const;
+
+const KlineIntervals = {
+  ONE_SECOND: "1s",
+  ONE_MINUTE: "1m",
+  THREE_MINUTES: "3m",
+  FIVE_MINUTES: "5m",
+  FIFTEEN_MINUTES: "15m",
+  THIRTY_MINUTES: "30m",
+  ONE_HOUR: "1h",
+  TWO_HOURS: "2h",
+} as const;
+
+const AlarmDiffSingle = 20;
+const AlarmDiffMulti = 40;
 
 config();
 
 if (process.env.BOT_TOKEN) {
+  let userIds: number[] = [];
+  let candles: TradeData[] = []; // last 3
+  let lastTradeData: TradeData | null = null;
+
   const bot = new Bot(process.env.BOT_TOKEN);
+
+  const ws = new WebSocket(
+    `${process.env.BINANCE_API}/${TradePairs.ETHUSDT}@${StreamTypes.KLINE}_${KlineIntervals.FIVE_MINUTES}`
+  );
+
+  const preparePriceMessage = (tradeData: TradeData) => {
+    if (!lastTradeData || lastTradeData.k.t === tradeData.k.t) {
+      lastTradeData = tradeData;
+      return;
+    }
+
+    candles.push(lastTradeData);
+    candles = candles.slice(-3);
+
+    const lastCandleDiff = (+lastTradeData.k.c - +lastTradeData.k.o).toFixed(2);
+    const lastCandleMaxDiff = (+lastTradeData.k.h - +lastTradeData.k.l).toFixed(
+      2
+    );
+
+    const allCandlesDiff = candles.reduce((acc: number, item: TradeData) => {
+      const diff = (+item.k.c - +item.k.o).toFixed(2);
+
+      return +(acc + +diff).toFixed(2);
+    }, 0);
+
+    const shouldShowSingleMessage =
+      Math.abs(Number(lastCandleDiff)) > AlarmDiffSingle;
+    const shouldShowMultiMessage = Math.abs(allCandlesDiff) > AlarmDiffMulti;
+
+    const oneCandleMessage = shouldShowSingleMessage
+      ? `1 candle warning: <code>${lastCandleDiff}</code>\n\n`
+      : "";
+    const multiCandlesMessage = shouldShowMultiMessage
+      ? `3 candles warning: <code>${allCandlesDiff}</code>\n\n`
+      : "";
+
+    if (shouldShowSingleMessage || shouldShowMultiMessage) {
+      const message =
+        oneCandleMessage +
+        multiCandlesMessage +
+        `Last candle:\n<code>${lastTradeData.k.o} - <b>${lastTradeData.k.c}</b> (${lastCandleDiff})</code>\nMin-max:\n<code>${lastTradeData.k.l} - ${lastTradeData.k.h} (${lastCandleMaxDiff})</code>`;
+
+      userIds.forEach((id: number) => {
+        bot.api.sendMessage(id, message, {
+          parse_mode: "HTML",
+        });
+      });
+    }
+
+    lastTradeData = tradeData;
+  };
+
+  ws.onmessage = (event) => {
+    const tradeData: TradeData = JSON.parse(event.data);
+    preparePriceMessage(tradeData);
+  };
 
   bot.api.setMyCommands([
     {
-      command: "start",
+      command: BotCommands.START,
       description: "Start the bot",
     },
     {
-      command: "mood",
-      description: "Check a mood",
+      command: BotCommands.STOP,
+      description: "Stop the bot",
     },
     {
-      command: "share",
-      description: "Share contact or location",
+      command: BotCommands.STATUS,
+      description: "Check the status",
     },
-    { command: "inline_keyboard", description: "Show inline keyboard" },
   ]);
 
-  bot.command(["start", "start2"], async (ctx) => {
-    const { from, message } = ctx;
-    console.log(from);
+  bot.command(BotCommands.START, async (ctx) => {
+    const { message, from } = ctx;
 
-    ctx.react("👍");
-    ctx.reply("Hello! <span class='tg-spoiler'>!!!!</span>", {
+    const userId = from?.id;
+
+    if (!userId) return;
+
+    const isActive = userIds.includes(userId);
+
+    const replyMessage = isActive
+      ? "You have already started the bot. Watching..."
+      : "Start watching <b>ETH</b>...";
+
+    if (!isActive) {
+      userIds.push(userId);
+      ctx.react("👍");
+    }
+
+    ctx.reply(replyMessage, {
       reply_parameters: message
         ? { message_id: message.message_id }
         : undefined,
@@ -35,73 +160,50 @@ if (process.env.BOT_TOKEN) {
     });
   });
 
-  bot.command("mood", async (ctx) => {
-    // const keyboard = new Keyboard()
-    //   .text("Ok")
-    //   .row()
-    //   .text("Good")
-    //   .row()
-    //   .text("Bad")
-    //   .resized()
-    //   .oneTime();
+  bot.command(BotCommands.STOP, async (ctx) => {
+    const { message, from } = ctx;
 
-    const labels = ["Ok", "Good", "Bad"];
-    const rows = labels.map((label) => [Keyboard.text(label)]);
-    const keyboard = Keyboard.from(rows).resized().oneTime();
+    const userId = from?.id;
 
-    await ctx.reply("How are you today?", {
-      reply_markup: keyboard,
-    });
-  });
+    if (!userId) return;
 
-  bot.command("share", async (ctx) => {
-    const keyboard = new Keyboard()
-      .requestContact("Contact")
-      .requestLocation("Location")
-      .requestPoll("Poll")
-      .resized()
-      .placeholder("Choose...")
-      .oneTime();
+    const index = userIds.indexOf(userId);
+    const isActive = index > -1;
 
-    await ctx.reply("Share your contact or location:", {
-      reply_markup: keyboard,
-    });
-  });
+    const replyMessage = isActive
+      ? "Stop watching <b>ETH</b>."
+      : "Bot is not started";
 
-  bot.command("inline_keyboard", async (ctx) => {
-    const keyboard = new InlineKeyboard()
-      .text("First", "first")
-      .text("Second", "second")
-      .text("Third", "third");
-
-    await ctx.reply("Chose a button", {
-      reply_markup: keyboard,
-    });
-  });
-
-  // bot.callbackQuery(["first", "second", "third"], async (ctx) => {
-  //   await ctx.answerCallbackQuery();
-  //   await ctx.reply("You clicked the button!");
-  // });
-  bot.on("callback_query:data", async (ctx) => {
-    await ctx.answerCallbackQuery();
-    await ctx.reply(`You clicked the ${ctx.callbackQuery.data} button!`);
-  });
-
-  bot.on("msg").filter(
-    (ctx) => ctx.from?.id === 123,
-    async (ctx) => {
-      await ctx.reply("Hello admin!");
+    if (isActive) {
+      userIds.splice(index, 1);
+      ctx.react("👍");
     }
-  );
 
-  bot.hears(/eth/, async (ctx) => {
-    ctx.reply("You mentioned Ethereum!");
+    ctx.reply(replyMessage, {
+      reply_parameters: message
+        ? { message_id: message.message_id }
+        : undefined,
+      parse_mode: "HTML",
+    });
   });
 
-  // bot.on("message", async (ctx) => { // :text, :voice, :photo, ::url
-  //   await ctx.reply("You can send me a message!");
-  // });
+  bot.command(BotCommands.STATUS, async (ctx) => {
+    const { message, from } = ctx;
+
+    const userId = from?.id;
+
+    const replyMessage =
+      userId && userIds.includes(userId)
+        ? "Watching <b>ETH</b>..."
+        : "Bot is not started";
+
+    ctx.reply(replyMessage, {
+      reply_parameters: message
+        ? { message_id: message.message_id }
+        : undefined,
+      parse_mode: "HTML",
+    });
+  });
 
   bot.catch(({ ctx, error }) => {
     console.error(`Error while handling update ${ctx.update.update_id}:`);
