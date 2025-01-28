@@ -1,5 +1,6 @@
 import { config } from "dotenv";
 import { Bot, GrammyError, HttpError } from "grammy";
+import WebSocket from "ws";
 
 interface TradeData {
   e: string; // Event type
@@ -115,7 +116,7 @@ if (process.env.BOT_TOKEN) {
   };
 
   ws.onmessage = (event) => {
-    const tradeData: TradeData = JSON.parse(event.data);
+    const tradeData: TradeData = JSON.parse(event.data as string);
     preparePriceMessage(tradeData);
   };
 

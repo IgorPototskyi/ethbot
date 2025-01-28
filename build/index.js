@@ -9,6 +9,7 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, ge
 };
 import { config } from "dotenv";
 import { Bot, GrammyError, HttpError } from "grammy";
+import WebSocket from "ws";
 const BotCommands = {
     START: "start",
     STOP: "stop",
