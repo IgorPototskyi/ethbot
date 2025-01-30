@@ -31,40 +31,43 @@ const KlineIntervals = {
     ONE_HOUR: "1h",
     TWO_HOURS: "2h",
 };
-const AlarmDiffSingle = 20;
-const AlarmDiffMulti = 40;
+const AlarmDiffCandles1 = 15;
+const AlarmDiffCandles3 = 30;
+const AlarmDiffCandles5 = 40;
 config();
+const getTradeSum = (acc, item) => {
+    const diff = (+item.k.c - +item.k.o).toFixed(2);
+    return +(acc + +diff).toFixed(2);
+};
+const getCandleMessage = (condition, candlesCount, diff) => condition ? `${candlesCount} candles warning: <code>${diff}</code>\n\n` : "";
 if (process.env.BOT_TOKEN) {
     let userIds = [];
     let candles = [];
     let lastTradeData = null;
+    let ws = null;
     const bot = new Bot(process.env.BOT_TOKEN);
-    const ws = new WebSocket(`${process.env.BINANCE_API}/${TradePairs.ETHUSDT}@${StreamTypes.KLINE}_${KlineIntervals.FIVE_MINUTES}`);
     const preparePriceMessage = (tradeData) => {
         if (!lastTradeData || lastTradeData.k.t === tradeData.k.t) {
             lastTradeData = tradeData;
             return;
         }
         candles.push(lastTradeData);
-        candles = candles.slice(-3);
+        candles = candles.slice(-5);
         const lastCandleDiff = (+lastTradeData.k.c - +lastTradeData.k.o).toFixed(2);
         const lastCandleMaxDiff = (+lastTradeData.k.h - +lastTradeData.k.l).toFixed(2);
-        const allCandlesDiff = candles.reduce((acc, item) => {
-            const diff = (+item.k.c - +item.k.o).toFixed(2);
-            return +(acc + +diff).toFixed(2);
-        }, 0);
-        const shouldShowSingleMessage = Math.abs(Number(lastCandleDiff)) > AlarmDiffSingle;
-        const shouldShowMultiMessage = Math.abs(allCandlesDiff) > AlarmDiffMulti;
-        const oneCandleMessage = shouldShowSingleMessage
-            ? `1 candle warning: <code>${lastCandleDiff}</code>\n\n`
-            : "";
-        const multiCandlesMessage = shouldShowMultiMessage
-            ? `3 candles warning: <code>${allCandlesDiff}</code>\n\n`
-            : "";
-        if (shouldShowSingleMessage || shouldShowMultiMessage) {
-            const message = oneCandleMessage +
-                multiCandlesMessage +
-                `Last candle:\n<code>${lastTradeData.k.o} - <b>${lastTradeData.k.c}</b> (${lastCandleDiff})</code>\nMin-max:\n<code>${lastTradeData.k.l} - ${lastTradeData.k.h} (${lastCandleMaxDiff})</code>`;
+        const diffCandles3 = candles.slice(-3).reduce(getTradeSum, 0);
+        const diffCandles5 = candles.reduce(getTradeSum, 0);
+        const shouldShowMessage1 = Math.abs(+lastCandleDiff) > AlarmDiffCandles1;
+        const shouldShowMessage3 = Math.abs(diffCandles3) > AlarmDiffCandles3;
+        const shouldShowMessage5 = Math.abs(diffCandles5) > AlarmDiffCandles5;
+        if (shouldShowMessage1 || shouldShowMessage3 || shouldShowMessage5) {
+            const lastCandleMessage = `Last candle:\n<code>${lastTradeData.k.o} - <b>${lastTradeData.k.c}</b> (${lastCandleDiff})</code>\n`;
+            const minMaxMessage = `Min-max:\n<code>${lastTradeData.k.l} - ${lastTradeData.k.h} (${lastCandleMaxDiff})</code>`;
+            const message = getCandleMessage(shouldShowMessage1, 1, +lastCandleDiff) +
+                getCandleMessage(shouldShowMessage3, 3, diffCandles3) +
+                getCandleMessage(shouldShowMessage5, 5, diffCandles5) +
+                lastCandleMessage +
+                minMaxMessage;
             userIds.forEach((id) => {
                 bot.api.sendMessage(id, message, {
                     parse_mode: "HTML",
@@ -73,9 +76,12 @@ if (process.env.BOT_TOKEN) {
         }
         lastTradeData = tradeData;
     };
-    ws.onmessage = (event) => {
-        const tradeData = JSON.parse(event.data);
-        preparePriceMessage(tradeData);
+    const openWebSocket = () => {
+        ws = new WebSocket(`${process.env.BINANCE_API}/${TradePairs.ETHUSDT}@${StreamTypes.KLINE}_${KlineIntervals.FIVE_MINUTES}`);
+        ws.onmessage = (event) => {
+            const tradeData = JSON.parse(event.data);
+            preparePriceMessage(tradeData);
+        };
     };
     bot.api.setMyCommands([
         {
@@ -110,6 +116,9 @@ if (process.env.BOT_TOKEN) {
                 : undefined,
             parse_mode: "HTML",
         });
+        if ((ws === null || ws === void 0 ? void 0 : ws.readyState) !== WebSocket.OPEN) {
+            openWebSocket();
+        }
     }));
     bot.command(BotCommands.STOP, (ctx) => __awaiter(void 0, void 0, void 0, function* () {
         const { message, from } = ctx;
@@ -131,6 +140,9 @@ if (process.env.BOT_TOKEN) {
                 : undefined,
             parse_mode: "HTML",
         });
+        if (!userIds.length) {
+            ws === null || ws === void 0 ? void 0 : ws.close();
+        }
     }));
     bot.command(BotCommands.STATUS, (ctx) => __awaiter(void 0, void 0, void 0, function* () {
         const { message, from } = ctx;
