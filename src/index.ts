@@ -52,10 +52,26 @@ const KlineIntervals = {
   TWO_HOURS: "2h",
 } as const;
 
-// TODO: create config
-const AlarmDiffCandles1 = 15;
-const AlarmDiffCandles3 = 30;
-const AlarmDiffCandles5 = 40;
+const DefaultInterval = KlineIntervals.FIVE_MINUTES;
+
+const AlarmConfig = [
+  {
+    candlesCount: 1,
+    alarmDiff: 15,
+  },
+  {
+    candlesCount: 3,
+    alarmDiff: 30,
+  },
+  {
+    candlesCount: 5,
+    alarmDiff: 40,
+  },
+];
+
+const MaxCandles = Math.max(
+  ...AlarmConfig.map(({ candlesCount }) => candlesCount)
+);
 
 config();
 
@@ -65,53 +81,64 @@ const getTradeSum = (acc: number, item: TradeData) => {
   return +(acc + +diff).toFixed(2);
 };
 
-const getCandleMessage = (
-  condition: boolean,
-  candlesCount: number,
-  diff: number
-) =>
-  condition ? `${candlesCount} candles warning: <code>${diff}</code>\n\n` : "";
+const getSign = (value: number) => (value > 0 ? "+" : "");
+
+const getCandleMessage = (candlesCount: number, diff: number) =>
+  `${
+    candlesCount * parseInt(DefaultInterval) + DefaultInterval.slice(-1)
+  } warning: <code>${getSign(diff)}${diff}</code>\n`;
 
 if (process.env.BOT_TOKEN) {
   let userIds: number[] = [];
-  let candles: TradeData[] = []; // last 5
+  let candles: TradeData[] = []; // last MaxCandles
   let lastTradeData: TradeData | null = null;
   let ws: WebSocket | null = null;
 
   const bot = new Bot(process.env.BOT_TOKEN);
 
-  const preparePriceMessage = (tradeData: TradeData) => {
+  const getDiff = (count: number) =>
+    candles.slice(-count).reduce(getTradeSum, 0);
+
+  const generateMessage = () => {
+    let message = "";
+
+    if (lastTradeData) {
+      const diffMessages = AlarmConfig.map(({ candlesCount, alarmDiff }) => {
+        const candlesDiff = getDiff(-candlesCount);
+
+        return Math.abs(candlesDiff) > alarmDiff
+          ? getCandleMessage(candlesCount, candlesDiff)
+          : "";
+      }).filter(Boolean);
+
+      if (diffMessages.length) {
+        const lastCandleDiff = getDiff(-1);
+
+        const lastCandleMessage = `\nLast candle:\n<code>${
+          lastTradeData.k.o
+        } - <b>${lastTradeData.k.c}</b> (${getSign(
+          lastCandleDiff
+        )}${lastCandleDiff})</code>`;
+
+        message = diffMessages.join("") + lastCandleMessage;
+      }
+    }
+
+    return message;
+  };
+
+  const processTradeData = (tradeData: TradeData) => {
     if (!lastTradeData || lastTradeData.k.t === tradeData.k.t) {
       lastTradeData = tradeData;
       return;
     }
 
     candles.push(lastTradeData);
-    candles = candles.slice(-5);
+    candles = candles.slice(-MaxCandles);
 
-    const lastCandleDiff = (+lastTradeData.k.c - +lastTradeData.k.o).toFixed(2);
-    const lastCandleMaxDiff = (+lastTradeData.k.h - +lastTradeData.k.l).toFixed(
-      2
-    );
+    const message = generateMessage();
 
-    const diffCandles3 = candles.slice(-3).reduce(getTradeSum, 0);
-    const diffCandles5 = candles.reduce(getTradeSum, 0);
-
-    const shouldShowMessage1 = Math.abs(+lastCandleDiff) > AlarmDiffCandles1;
-    const shouldShowMessage3 = Math.abs(diffCandles3) > AlarmDiffCandles3;
-    const shouldShowMessage5 = Math.abs(diffCandles5) > AlarmDiffCandles5;
-
-    if (shouldShowMessage1 || shouldShowMessage3 || shouldShowMessage5) {
-      const lastCandleMessage = `Last candle:\n<code>${lastTradeData.k.o} - <b>${lastTradeData.k.c}</b> (${lastCandleDiff})</code>\n`;
-      const minMaxMessage = `Min-max:\n<code>${lastTradeData.k.l} - ${lastTradeData.k.h} (${lastCandleMaxDiff})</code>`;
-
-      const message =
-        getCandleMessage(shouldShowMessage1, 1, +lastCandleDiff) +
-        getCandleMessage(shouldShowMessage3, 3, diffCandles3) +
-        getCandleMessage(shouldShowMessage5, 5, diffCandles5) +
-        lastCandleMessage +
-        minMaxMessage;
-
+    if (message.length) {
       userIds.forEach((id: number) => {
         bot.api.sendMessage(id, message, {
           parse_mode: "HTML",
@@ -124,12 +151,12 @@ if (process.env.BOT_TOKEN) {
 
   const openWebSocket = () => {
     ws = new WebSocket(
-      `${process.env.BINANCE_API}/${TradePairs.ETHUSDT}@${StreamTypes.KLINE}_${KlineIntervals.FIVE_MINUTES}`
+      `${process.env.BINANCE_API}/${TradePairs.ETHUSDT}@${StreamTypes.KLINE}_${DefaultInterval}`
     );
 
     ws.onmessage = (event) => {
       const tradeData: TradeData = JSON.parse(event.data as string);
-      preparePriceMessage(tradeData);
+      processTradeData(tradeData);
     };
   };
 
