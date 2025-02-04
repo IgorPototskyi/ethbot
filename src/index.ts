@@ -102,26 +102,24 @@ if (process.env.BOT_TOKEN) {
   const generateMessage = () => {
     let message = "";
 
-    if (lastTradeData) {
-      const diffMessages = AlarmConfig.map(({ candlesCount, alarmDiff }) => {
-        const candlesDiff = getDiff(-candlesCount);
+    const diffMessages = AlarmConfig.map(({ candlesCount, alarmDiff }) => {
+      const diff = getDiff(candlesCount);
 
-        return Math.abs(candlesDiff) > alarmDiff
-          ? getCandleMessage(candlesCount, candlesDiff)
-          : "";
-      }).filter(Boolean);
+      return Math.abs(diff) > alarmDiff
+        ? getCandleMessage(candlesCount, diff)
+        : "";
+    }).filter(Boolean);
 
-      if (diffMessages.length) {
-        const lastCandleDiff = getDiff(-1);
+    const lastCandle = candles[candles.length - 1];
 
-        const lastCandleMessage = `\nLast candle:\n<code>${
-          lastTradeData.k.o
-        } - <b>${lastTradeData.k.c}</b> (${getSign(
-          lastCandleDiff
-        )}${lastCandleDiff})</code>`;
+    if (diffMessages.length && lastCandle) {
+      const lastCandleDiff = getTradeSum(0, lastCandle);
 
-        message = diffMessages.join("") + lastCandleMessage;
-      }
+      const lastCandleMessage = `\nLast candle:\n<code>${lastCandle.k.o} - <b>${
+        lastCandle.k.c
+      }</b> (${getSign(lastCandleDiff)}${lastCandleDiff})</code>`;
+
+      message = diffMessages.join("") + lastCandleMessage;
     }
 
     return message;
@@ -233,6 +231,8 @@ if (process.env.BOT_TOKEN) {
 
     if (!userIds.length) {
       ws?.close();
+      lastTradeData = null;
+      candles = [];
     }
   });
 
